@@ -1,0 +1,61 @@
+# nic-autoswitch 容器调试配置
+#
+# 接口名对应 scripts/setup-netns.sh 中创建的 dummy 接口:
+#   nic0 = LAN,  nic1 = WLAN,  nic2 = VPN
+
+[global]
+monitor_interval = 5
+log_level = "debug"
+dry_run = false
+table_id_start = 100
+
+# --- LAN ---
+[interfaces.nic0]
+interface_type = "lan"
+match_by = { name = "nic0" }
+priority = 10
+
+# --- WLAN ---
+[interfaces.nic1]
+interface_type = "wlan"
+match_by = { name = "nic1" }
+priority = 20
+
+# --- VPN ---
+[interfaces.nic2]
+interface_type = "vpn"
+match_by = { name = "nic2" }
+priority = 5
+
+# --- WiFi Profile: 模拟公司网络 ---
+[wifi_profiles."CorpWiFi"]
+interface = "nic1"
+
+[[wifi_profiles."CorpWiFi".rules]]
+name = "corp-lan"
+match_on = { cidr = "10.0.0.0/8" }
+route_via = { interface = "nic0" }
+priority = 100
+
+[[wifi_profiles."CorpWiFi".rules]]
+name = "corp-lan2"
+match_on = { cidr = "172.16.0.0/12" }
+route_via = { interface = "nic0" }
+priority = 110
+
+# --- WiFi Profile: 模拟家庭网络 ---
+[wifi_profiles."HomeWiFi"]
+interface = "nic1"
+
+[[wifi_profiles."HomeWiFi".rules]]
+name = "home-nas"
+match_on = { cidr = "192.168.1.0/24" }
+route_via = { interface = "nic1" }
+priority = 100
+
+# --- 默认路由规则 ---
+[[routing.default_rules]]
+name = "default-ipv4"
+match_on = { cidr = "0.0.0.0/0" }
+route_via = { interface = "nic1" }
+priority = 10000

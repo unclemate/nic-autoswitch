@@ -1,0 +1,29 @@
+services:
+  dev:
+    build: .
+    container_name: nic-dev
+    network_mode: none
+    cap_add: [NET_ADMIN, NET_RAW]
+    volumes:
+      - ./config.example.toml:/etc/nic-autoswitch/config.toml
+    stdin_open: true
+    tty: true
+    entrypoint: ["bash", "scripts/setup-netns.sh"]
+
+  test:
+    build: .
+    container_name: nic-test
+    network_mode: none
+    cap_add: [NET_ADMIN, NET_RAW]
+    volumes:
+      - ./config.example.toml:/etc/nic-autoswitch/config.toml
+    entrypoint: ["bash", "scripts/setup-netns.sh", "--", "cargo", "test", "--", "--test-threads=1"]
+
+  test-integration:
+    build: .
+    container_name: nic-inttest
+    network_mode: none
+    cap_add: [NET_ADMIN, NET_RAW]
+    volumes:
+      - ./config.example.toml:/etc/nic-autoswitch/config.toml
+    entrypoint: ["bash", "scripts/setup-netns.sh", "--", "cargo", "test", "--test", "integration_route", "--test", "integration_daemon", "--test", "integration_cli", "--test", "integration_e2e", "--", "--test-threads=1"]

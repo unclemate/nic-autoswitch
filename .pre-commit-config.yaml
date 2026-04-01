@@ -1,0 +1,61 @@
+# Pre-commit hooks configuration
+# Install: pip install pre-commit && pre-commit install
+
+repos:
+  # Rust checks
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt --
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: cargo clippy --all-targets --all-features -- -D warnings
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-test
+        name: cargo test
+        entry: cargo test --lib
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      - id: cargo-doc
+        name: cargo doc check
+        entry: bash -c 'RUSTDOCFLAGS="-D warnings" cargo doc --no-deps'
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+  # General checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--unsafe]
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+
+  # Commit message format
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v3.13.0
+    hooks:
+      - id: commitizen
+        stages: [commit-msg]
+
+# CI configuration
+ci:
+  autofix_prs: false
+  skip: [cargo-test]

@@ -1,0 +1,70 @@
+[package]
+name = "nic-autoswitch"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "nic-autoswitch"
+path = "src/main.rs"
+
+[[bin]]
+name = "nic-autoswitch-cli"
+path = "src/cli/main.rs"
+
+[dependencies]
+# 异步运行时
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time", "sync", "net"] }
+futures = "0.3"
+
+# 日志
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-journald = "0.3"
+
+# 配置
+config = "0.14"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# 信号处理
+signal-hook = "0.3"
+signal-hook-tokio = { version = "0.3", features = ["futures-v0_3"] }
+
+# 网络监控
+rtnetlink = "0.14"
+netlink-packet-route = "0.19"
+zbus = { version = "5", default-features = false, features = ["tokio"] }
+
+# DNS解析
+hickory-resolver = "0.24"
+
+# IP地址处理
+ipnetwork = "0.20"
+
+# 错误处理
+anyhow = "1"
+thiserror = "2"
+
+# 配置文件热加载
+notify = "6"
+
+# CLI参数解析
+clap = { version = "4", features = ["derive"] }
+parking_lot = "0.12.5"
+libc = "0.2"
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3"
+mockall = "0.13"
+criterion = { version = "0.5", features = ["async_tokio"] }
+
+# 基准测试配置
+[[bench]]
+name = "matcher_bench"
+harness = false
+
+[[bench]]
+name = "router_bench"
+harness = false

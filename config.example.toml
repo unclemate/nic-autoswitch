@@ -1,0 +1,180 @@
+# nic-autoswitch 示例配置文件
+#
+# 此配置文件演示了 nic-autoswitch 守护进程的所有配置选项。
+# 将此文件复制到 /etc/nic-autoswitch/config.toml 并根据需要修改。
+
+# ============================================================================
+# 全局配置
+# ============================================================================
+[global]
+# 网络状态监控间隔（秒）
+monitor_interval = 5
+
+# 日志级别: trace, debug, info, warn, error
+log_level = "info"
+
+# 干运行模式：只打印将要执行的操作，不实际修改路由表
+# 可通过命令行 --dry-run 参数覆盖
+dry_run = false
+
+# 路由表 ID 起始值
+# IPv4 使用 100-199，IPv6 使用 200-299
+# 确保这些表 ID 未被系统其他服务占用
+table_id_start = 100
+
+# ============================================================================
+# 接口配置
+# ============================================================================
+#
+# 定义系统中的网络接口。每个接口可以有以下属性：
+# - interface_type: 接口类型 (lan, wlan, vpn)
+# - match_by: 如何匹配此接口
+#   - name: 精确匹配接口名称
+#   - pattern: 模式匹配（如 "eth*"）
+#   - mac: MAC 地址匹配
+# - priority: 优先级（数值越小优先级越高）
+
+# 有线 LAN 接口示例
+[interfaces.eth0]
+interface_type = "lan"
+match_by = { name = "eth0" }
+priority = 10
+
+# 无线 WLAN 接口示例
+[interfaces.wlan0]
+interface_type = "wlan"
+match_by = { name = "wlan0" }
+priority = 20
+
+# VPN 接口示例
+[interfaces.tun0]
+interface_type = "vpn"
+match_by = { name = "tun0" }
+priority = 5
+
+# 使用模式匹配的示例
+[interfaces.eth-any]
+interface_type = "lan"
+match_by = { pattern = "eth*" }
+priority = 15
+
+# ============================================================================
+# WiFi 配置文件
+# ============================================================================
+#
+# 根据 SSID 定义不同的路由规则。
+# 当连接到指定的 WiFi 网络时，将应用对应的规则。
+
+# 公司 WiFi 配置示例
+[wifi_profiles."CorpWiFi"]
+interface = "wlan0"
+
+# 公司内网 CIDR 规则
+[[wifi_profiles."CorpWiFi".rules]]
+name = "corp-cidr-10"
+match_on = { cidr = "10.0.0.0/8" }
+route_via = { interface = "eth0" }
+priority = 100
+
+[[wifi_profiles."CorpWiFi".rules]]
+name = "corp-cidr-17216"
+match_on = { cidr = "172.16.0.0/12" }
+route_via = { interface = "eth0" }
+priority = 110
+
+# 公司内网特定 IP
+[[wifi_profiles."CorpWiFi".rules]]
+name = "corp-gitlab"
+match_on = { ip = "203.0.113.50" }
+route_via = { interface = "eth0" }
+priority = 120
+
+# 精确域名匹配
+[[wifi_profiles."CorpWiFi".rules]]
+name = "corp-gitlab-domain"
+match_on = { domain = "gitlab.corp.com" }
+route_via = { interface = "eth0" }
+priority = 130
+
+# 通配符域名匹配
+[[wifi_profiles."CorpWiFi".rules]]
+name = "corp-wildcard"
+match_on = { domain_pattern = "*.corp.example.com" }
+route_via = { interface = "eth0" }
+priority = 140
+
+# 另一个 WiFi 配置示例
+[wifi_profiles."HomeWiFi"]
+interface = "wlan0"
+
+[[wifi_profiles."HomeWiFi".rules]]
+name = "home-nas"
+match_on = { cidr = "192.168.1.0/24" }
+route_via = { interface = "wlan0" }
+priority = 100
+
+# ============================================================================
+# 默认路由规则
+# ============================================================================
+#
+# 当没有 WiFi 配置文件匹配时应用的默认规则。
+# 通常用于设置默认网关。
+
+# 默认 IPv4 路由（所有流量走 wlan0）
+[[routing.default_rules]]
+name = "default-ipv4"
+match_on = { cidr = "0.0.0.0/0" }
+route_via = { interface = "wlan0" }
+priority = 10000
+
+# 默认 IPv6 路由
+[[routing.default_rules]]
+name = "default-ipv6"
+match_on = { cidr = "::/0" }
+route_via = { interface = "wlan0" }
+priority = 10001
+
+# ============================================================================
+# 使用场景示例
+# ============================================================================
+#
+# 以下是一些常见使用场景的配置示例：
+
+# 场景 1：VPN 智能路由
+# 仅让公司内网流量走 VPN，其他流量直连
+#
+# [wifi_profiles."CorpVPN"]
+# interface = "tun0"
+#
+# [[wifi_profiles."CorpVPN".rules]]
+# name = "corp-vpn-cidr"
+# match_on = { cidr = "10.0.0.0/8" }
+# route_via = { interface = "tun0" }
+# priority = 100
+
+# 场景 2：流量优先级管理
+# 关键业务走低延迟接口
+#
+# [[wifi_profiles."Office".rules]]
+# name = "critical-voip"
+# match_on = { domain = "voip.company.com" }
+# route_via = { interface = "eth0" }  # 有线连接延迟更低
+# priority = 50
+
+# 场景 3：故障自动切换
+# 通过监控接口状态实现自动切换（需要配合监控模块）
+#
+# [interfaces.eth0]
+# interface_type = "lan"
+# match_by = { name = "eth0" }
+# priority = 10
+# failover_to = "wlan0"  # 当 eth0 断开时切换到 wlan0
+
+# 场景 4：开发者测试环境
+# 测试环境域名自动路由到测试网络
+#
+# [[wifi_profiles."DevWiFi".rules]]
+# name = "dev-staging"
+# match_on = { domain_pattern = "*.staging.dev.company.com" }
+# route_via = { interface = "eth0" }
+# priority = 100

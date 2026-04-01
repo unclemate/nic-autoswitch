@@ -1,0 +1,32 @@
+[Unit]
+Description=NIC Auto-Switch Daemon
+Documentation=https://github.com/unclemt/nic-autoswitch
+After=network.target
+
+ConditionPathExists=/etc/nic-autoswitch/config.toml
+
+[Service]
+Type=notify
+NotifyAccess=all
+ExecStart=/usr/bin/nic-autoswitch --config /etc/nic-autoswitch/config.toml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+
+# Watchdog for service health monitoring
+WatchdogSec=30
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=yes
+RestrictAddressFamilies=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+
+# Resource limits
+LimitNOFILE=65536
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
