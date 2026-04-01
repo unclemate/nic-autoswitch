@@ -1,0 +1,19 @@
+[global]
+monitor_interval = 5
+table_id_start = 100
+
+[interfaces.nic0]
+interface_type = "lan"
+match_by = { name = "nic0" }
+
+[[routing.default_rules]]
+name = "duplicate-rule"
+match_on = { cidr = "10.0.0.0/8" }
+route_via = { interface = "nic0" }
+priority = 100
+
+[[routing.default_rules]]
+name = "duplicate-rule"
+match_on = { cidr = "172.16.0.0/12" }
+route_via = { interface = "nic0" }
+priority = 110

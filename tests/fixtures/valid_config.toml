@@ -1,0 +1,58 @@
+# nic-autoswitch 示例配置文件
+
+[global]
+monitor_interval = 5
+log_level = "info"
+dry_run = false
+table_id_start = 100
+
+[interfaces.eth0]
+interface_type = "lan"
+match_by = { name = "eth0" }
+priority = 10
+
+[interfaces.wlan0]
+interface_type = "wlan"
+match_by = { name = "wlan0" }
+priority = 20
+
+# WiFi SSID 特定规则
+[wifi_profiles."CorpWiFi"]
+interface = "wlan0"
+
+[[wifi_profiles."CorpWiFi".rules]]
+name = "corp-cidr"
+match_on = { cidr = "10.0.0.0/8" }
+route_via = { interface = "eth0" }
+priority = 100
+
+[[wifi_profiles."CorpWiFi".rules]]
+name = "corp-single-ip"
+match_on = { ip = "203.0.113.50" }
+route_via = { interface = "eth0" }
+priority = 110
+
+[[wifi_profiles."CorpWiFi".rules]]
+name = "corp-exact-domain"
+match_on = { domain = "gitlab.corp.com" }
+route_via = { interface = "eth0" }
+priority = 120
+
+[[wifi_profiles."CorpWiFi".rules]]
+name = "corp-wildcard-domain"
+match_on = { domain_pattern = "*.corp.example.com" }
+route_via = { interface = "eth0" }
+priority = 130
+
+# 默认规则
+[[routing.default_rules]]
+name = "default-wlan"
+match_on = { cidr = "0.0.0.0/0" }
+route_via = { interface = "wlan0" }
+priority = 10000
+
+[[routing.default_rules]]
+name = "default-ipv6"
+match_on = { cidr = "::/0" }
+route_via = { interface = "wlan0" }
+priority = 10001

@@ -1,0 +1,22 @@
+# 容器测试专用配置 — 接口名对应 setup-netns.sh 创建的 dummy 接口
+[global]
+monitor_interval = 5
+log_level = "info"
+dry_run = false
+table_id_start = 100
+
+[interfaces.nic0]
+interface_type = "lan"
+match_by = { name = "nic0" }
+priority = 10
+
+[interfaces.nic1]
+interface_type = "wlan"
+match_by = { name = "nic1" }
+priority = 20
+
+[[routing.default_rules]]
+name = "default-ipv4"
+match_on = { cidr = "0.0.0.0/0" }
+route_via = { interface = "nic1" }
+priority = 10000

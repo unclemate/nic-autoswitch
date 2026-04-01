@@ -1,0 +1,4 @@
+[global]
+monitor_interval = 5
+log_level = "info"
+table_id_start = 100

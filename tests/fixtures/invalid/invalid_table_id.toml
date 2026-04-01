@@ -1,0 +1,7 @@
+[global]
+monitor_interval = 5
+table_id_start = 50
+
+[interfaces.eth0]
+interface_type = "lan"
+match_by = { name = "eth0" }

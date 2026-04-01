@@ -1,0 +1,78 @@
+# 复杂配置 — 多 profile、多规则、多匹配类型
+[global]
+monitor_interval = 3
+log_level = "debug"
+dry_run = false
+table_id_start = 100
+
+[interfaces.nic0]
+interface_type = "lan"
+match_by = { name = "nic0" }
+priority = 10
+
+[interfaces.nic1]
+interface_type = "wlan"
+match_by = { name = "nic1" }
+priority = 20
+
+[interfaces.nic2]
+interface_type = "vpn"
+match_by = { name = "nic2" }
+priority = 5
+
+# --- 公司 WiFi ---
+[wifi_profiles."CorpWiFi"]
+interface = "nic1"
+
+[[wifi_profiles."CorpWiFi".rules]]
+name = "corp-cidr-10"
+match_on = { cidr = "10.0.0.0/8" }
+route_via = { interface = "nic0" }
+priority = 100
+
+[[wifi_profiles."CorpWiFi".rules]]
+name = "corp-cidr-172"
+match_on = { cidr = "172.16.0.0/12" }
+route_via = { interface = "nic0" }
+priority = 110
+
+[[wifi_profiles."CorpWiFi".rules]]
+name = "corp-exact-ip"
+match_on = { ip = "203.0.113.50" }
+route_via = { interface = "nic0" }
+priority = 120
+
+[[wifi_profiles."CorpWiFi".rules]]
+name = "corp-domain"
+match_on = { domain = "gitlab.corp.com" }
+route_via = { interface = "nic0" }
+priority = 130
+
+[[wifi_profiles."CorpWiFi".rules]]
+name = "corp-wildcard"
+match_on = { domain_pattern = "*.corp.example.com" }
+route_via = { interface = "nic0" }
+priority = 140
+
+# --- 家庭 WiFi ---
+[wifi_profiles."HomeWiFi"]
+interface = "nic1"
+
+[[wifi_profiles."HomeWiFi".rules]]
+name = "home-nas"
+match_on = { cidr = "192.168.1.0/24" }
+route_via = { interface = "nic1" }
+priority = 100
+
+[[wifi_profiles."HomeWiFi".rules]]
+name = "home-printer"
+match_on = { ip = "192.168.1.200" }
+route_via = { interface = "nic1" }
+priority = 110
+
+# --- 默认路由 ---
+[[routing.default_rules]]
+name = "default-ipv4"
+match_on = { cidr = "0.0.0.0/0" }
+route_via = { interface = "nic1" }
+priority = 10000
