@@ -24,6 +24,10 @@ impl RuleOperator {
     }
 
     /// Apply a route rule
+    ///
+    /// This performs two operations:
+    /// 1. Add a policy rule (`ip rule add`) to direct matching traffic to the custom table
+    /// 2. Add a route in that table (`ip route add`) to forward traffic via the target interface
     pub async fn apply_rule(
         &self,
         rule: &RouteRule,
@@ -34,22 +38,36 @@ impl RuleOperator {
         let gateway = self.get_gateway(rule)?;
         let interface = rule.route_via.interface.clone();
 
+        // 1. Add policy rule to direct matching traffic to the custom table
+        self.route_manager
+            .add_policy_rule(Some(destination), None, table_id, rule.priority)
+            .await?;
+
+        // 2. Add route in the custom table
         self.route_manager
             .add_route(destination, gateway, &interface, table_id, rule.priority)
             .await?;
 
         info!(
-            "Applied rule '{}' -> {} via {}",
-            rule.name, destination, interface
+            "Applied rule '{}' -> {} via {} (table {})",
+            rule.name, destination, interface, table_id
         );
 
         Ok(())
     }
 
     /// Remove a route rule
+    ///
+    /// Removes both the policy rule and the route from the custom table.
     pub async fn remove_rule(&self, rule: &RouteRule, table_id: u32) -> crate::Result<()> {
         let destination = self.get_destination(rule)?;
 
+        // 1. Remove policy rule
+        self.route_manager
+            .remove_policy_rule(Some(destination), None, table_id, rule.priority)
+            .await?;
+
+        // 2. Remove route from table
         self.route_manager
             .remove_route(destination, table_id)
             .await?;

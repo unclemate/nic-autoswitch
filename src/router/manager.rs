@@ -23,6 +23,28 @@ use netlink_packet_route::rule::{RuleAction, RuleAttribute, RuleMessage};
 use rtnetlink::Handle;
 use tracing::{debug, info, warn};
 
+/// Check if a rtnetlink error indicates "entry already exists" (EEXIST, errno 17).
+///
+/// Treating EEXIST as success makes add operations idempotent.
+fn is_already_exists(err: &rtnetlink::Error) -> bool {
+    netlink_errno(err) == Some(17)
+}
+
+/// Check if a rtnetlink error indicates "no such entry" (ENOENT errno 2 or ENXIO errno 6).
+///
+/// Treating these as success makes remove operations idempotent.
+fn is_no_such_entry(err: &rtnetlink::Error) -> bool {
+    matches!(netlink_errno(err), Some(2) | Some(6))
+}
+
+/// Extract the errno from a rtnetlink error, if available.
+fn netlink_errno(err: &rtnetlink::Error) -> Option<i32> {
+    match err {
+        rtnetlink::Error::NetlinkError(msg) => msg.code.map(|c| c.get().abs()),
+        _ => None,
+    }
+}
+
 /// Route table ID ranges
 pub const IPV4_TABLE_START: u32 = 100;
 pub const IPV4_TABLE_END: u32 = 199;
@@ -234,12 +256,21 @@ impl RouteManager {
                 .attributes
                 .push(RouteAttribute::Priority(metric));
 
-            req.execute().await.map_err(|e| {
-                crate::NicAutoSwitchError::Route(format!(
-                    "Failed to add route {} dev {} table {}: {}",
-                    destination, interface, table_id, e
-                ))
-            })?;
+            match req.execute().await {
+                Ok(()) => {}
+                Err(e) if is_already_exists(&e) => {
+                    debug!(
+                        "Route {} dev {} table {} already exists, treating as success",
+                        destination, interface, table_id
+                    );
+                }
+                Err(e) => {
+                    return Err(crate::NicAutoSwitchError::Route(format!(
+                        "Failed to add route {} dev {} table {}: {}",
+                        destination, interface, table_id, e
+                    )));
+                }
+            }
         } else {
             let dest = match destination.ip() {
                 IpAddr::V6(v6) => v6,
@@ -265,12 +296,21 @@ impl RouteManager {
                 .attributes
                 .push(RouteAttribute::Priority(metric));
 
-            req.execute().await.map_err(|e| {
-                crate::NicAutoSwitchError::Route(format!(
-                    "Failed to add IPv6 route {} dev {} table {}: {}",
-                    destination, interface, table_id, e
-                ))
-            })?;
+            match req.execute().await {
+                Ok(()) => {}
+                Err(e) if is_already_exists(&e) => {
+                    debug!(
+                        "IPv6 route {} dev {} table {} already exists, treating as success",
+                        destination, interface, table_id
+                    );
+                }
+                Err(e) => {
+                    return Err(crate::NicAutoSwitchError::Route(format!(
+                        "Failed to add IPv6 route {} dev {} table {}: {}",
+                        destination, interface, table_id, e
+                    )));
+                }
+            }
         }
 
         info!(
@@ -322,12 +362,21 @@ impl RouteManager {
                 .push(RouteAttribute::Destination(RouteAddress::Inet6(dest)));
         }
 
-        handle.route().del(msg).execute().await.map_err(|e| {
-            crate::NicAutoSwitchError::Route(format!(
-                "Failed to remove route {} from table {}: {}",
-                destination, table_id, e
-            ))
-        })?;
+        match handle.route().del(msg).execute().await {
+            Ok(()) => {}
+            Err(e) if is_no_such_entry(&e) => {
+                debug!(
+                    "Route {} in table {} already absent, treating as success",
+                    destination, table_id
+                );
+            }
+            Err(e) => {
+                return Err(crate::NicAutoSwitchError::Route(format!(
+                    "Failed to remove route {} from table {}: {}",
+                    destination, table_id, e
+                )));
+            }
+        }
 
         info!("Removed route: {} from table {}", destination, table_id);
         Ok(())
@@ -490,12 +539,21 @@ impl RouteManager {
             }
 
             req = req.table_id(table_id).priority(priority);
-            req.execute().await.map_err(|e| {
-                crate::NicAutoSwitchError::Route(format!(
-                    "Failed to add IPv4 policy rule (table {}, priority {}): {}",
-                    table_id, priority, e
-                ))
-            })?;
+            match req.execute().await {
+                Ok(()) => {}
+                Err(e) if is_already_exists(&e) => {
+                    debug!(
+                        "IPv4 policy rule (table {}, priority {}) already exists, treating as success",
+                        table_id, priority
+                    );
+                }
+                Err(e) => {
+                    return Err(crate::NicAutoSwitchError::Route(format!(
+                        "Failed to add IPv4 policy rule (table {}, priority {}): {}",
+                        table_id, priority, e
+                    )));
+                }
+            }
         } else {
             let mut req = handle.rule().add().v6().action(RuleAction::ToTable);
             if let Some(IpNetwork::V6(net)) = destination {
@@ -506,12 +564,21 @@ impl RouteManager {
             }
 
             req = req.table_id(table_id).priority(priority);
-            req.execute().await.map_err(|e| {
-                crate::NicAutoSwitchError::Route(format!(
-                    "Failed to add IPv6 policy rule (table {}, priority {}): {}",
-                    table_id, priority, e
-                ))
-            })?;
+            match req.execute().await {
+                Ok(()) => {}
+                Err(e) if is_already_exists(&e) => {
+                    debug!(
+                        "IPv6 policy rule (table {}, priority {}) already exists, treating as success",
+                        table_id, priority
+                    );
+                }
+                Err(e) => {
+                    return Err(crate::NicAutoSwitchError::Route(format!(
+                        "Failed to add IPv6 policy rule (table {}, priority {}): {}",
+                        table_id, priority, e
+                    )));
+                }
+            }
         }
 
         debug!(
@@ -551,12 +618,21 @@ impl RouteManager {
         let ip_ver = if is_ipv4 { "IPv4" } else { "IPv6" };
         let rule_msg = build_rule_message(destination, source, table_id, priority, is_ipv4)?;
 
-        handle.rule().del(rule_msg).execute().await.map_err(|e| {
-            crate::NicAutoSwitchError::Route(format!(
-                "Failed to remove {} policy rule (table {}, priority {}): {}",
-                ip_ver, table_id, priority, e
-            ))
-        })?;
+        match handle.rule().del(rule_msg).execute().await {
+            Ok(()) => {}
+            Err(e) if is_no_such_entry(&e) => {
+                debug!(
+                    "{} policy rule (table {}, priority {}) already absent, treating as success",
+                    ip_ver, table_id, priority
+                );
+            }
+            Err(e) => {
+                return Err(crate::NicAutoSwitchError::Route(format!(
+                    "Failed to remove {} policy rule (table {}, priority {}): {}",
+                    ip_ver, table_id, priority, e
+                )));
+            }
+        }
 
         debug!(
             "Removed policy rule: table={}, priority={}",

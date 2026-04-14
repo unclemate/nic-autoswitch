@@ -129,7 +129,8 @@ priority = 10000
 | IP网段 | `match_on = { cidr = "x.x.x.x/y" }` | CIDR格式网段 | `10.0.0.0/8`, `192.168.1.0/24` |
 | 单个IP | `match_on = { ip = "x.x.x.x" }` | 单个IPv4/IPv6地址 | `203.0.113.50`, `2001:db8::1` |
 | 精确域名 | `match_on = { domain = "example.com" }` | 完整域名匹配 | `gitlab.corp.com` |
-| 通配符域名 | `match_on = { domain_pattern = "*.example.com" }` | 支持前缀通配符 | `*.corp.example.com` |
+| 通配符域名 | `match_on = { domain_pattern = "*.example.com" }` | 后缀通配符 | `*.corp.example.com` |
+| 通配符域名 | `match_on = { domain_pattern = "heals-*" }` | 前缀通配符 | `heals-*` |
 
 ### 匹配逻辑
 

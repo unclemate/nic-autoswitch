@@ -96,12 +96,19 @@ match_on = { domain = "gitlab.corp.com" }
 route_via = { interface = "eth0" }
 priority = 130
 
-# 通配符域名匹配
+# 通配符域名匹配（后缀匹配）
 [[wifi_profiles."CorpWiFi".rules]]
 name = "corp-wildcard"
 match_on = { domain_pattern = "*.corp.example.com" }
 route_via = { interface = "eth0" }
 priority = 140
+
+# 通配符域名匹配（前缀匹配）— 所有 heals-* 主机走内网
+[[wifi_profiles."CorpWiFi".rules]]
+name = "heals-sites-via-lan"
+match_on = { domain_pattern = "heals-*" }
+route_via = { interface = "eth0" }
+priority = 150
 
 # 另一个 WiFi 配置示例
 [wifi_profiles."HomeWiFi"]

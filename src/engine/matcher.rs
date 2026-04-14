@@ -132,30 +132,31 @@ impl RuleMatcher {
         }
     }
 
-    /// Check if a wildcard pattern matches a domain
+    /// Check if a wildcard pattern matches a domain.
+    /// Supports: "*" (all), "*.example.com" (suffix), "heals-*" (prefix).
     fn matches_wildcard(&self, pattern: &str, domain: &str) -> bool {
-        // Pattern should start with '*'
-        if !pattern.starts_with('*') {
-            return false;
-        }
-
-        // Get the suffix after '*'
-        let suffix = &pattern[1..];
-
-        // Check if domain ends with the suffix
-        if suffix.is_empty() {
+        // Bare "*" matches everything
+        if pattern == "*" {
             return true;
         }
 
-        // Match: domain should end with suffix
-        // And should have at least one character before the suffix
-        // (unless pattern is just '*')
-        if domain.len() < suffix.len() {
-            return false;
+        // Suffix: "*.example.com" → domain ends with ".example.com"
+        if let Some(suffix) = pattern.strip_prefix('*') {
+            if suffix.is_empty() {
+                return true;
+            }
+            return domain.len() > suffix.len() && domain.ends_with(suffix);
         }
 
-        let domain_suffix = &domain[domain.len() - suffix.len()..];
-        domain_suffix == suffix && (domain.len() > suffix.len() || suffix.is_empty())
+        // Prefix: "heals-*" → domain starts with "heals-"
+        if let Some(prefix) = pattern.strip_suffix('*') {
+            if prefix.is_empty() {
+                return true;
+            }
+            return domain.len() > prefix.len() && domain.starts_with(prefix);
+        }
+
+        false
     }
 
     /// Match all rules for a destination (returns all matches, sorted by priority)
@@ -614,6 +615,66 @@ mod tests {
         let matcher = RuleMatcher::new();
         // "*.example.com" should match "a.example.com" but NOT "example.com"
         assert!(!matcher.matches_wildcard("*.example.com", "example.com"));
+    }
+
+    // -------------------------------------------------------------------------
+    // Prefix pattern tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_matches_wildcard_with_prefix_pattern() {
+        let matcher = RuleMatcher::new();
+        assert!(matcher.matches_wildcard("heals-*", "heals-api-server"));
+        assert!(matcher.matches_wildcard("heals-*", "heals-es-dev"));
+        assert!(matcher.matches_wildcard("heals-*", "heals-logstash-prod"));
+    }
+
+    #[test]
+    fn test_matches_wildcard_with_prefix_pattern_exact_prefix_no_match() {
+        let matcher = RuleMatcher::new();
+        // "heals-*" should NOT match "heals-" itself (* must match at least one char)
+        assert!(!matcher.matches_wildcard("heals-*", "heals-"));
+    }
+
+    #[test]
+    fn test_matches_wildcard_with_prefix_pattern_no_match() {
+        let matcher = RuleMatcher::new();
+        assert!(!matcher.matches_wildcard("heals-*", "api-heals-server"));
+        assert!(!matcher.matches_wildcard("heals-*", "other-api"));
+    }
+
+    #[tokio::test]
+    async fn test_find_matching_rule_with_prefix_domain_pattern_returns_match() {
+        let matcher = RuleMatcher::new();
+        let rules = vec![create_test_rule(
+            "heals-prefix",
+            MatchOn::DomainPattern {
+                domain_pattern: "heals-*".to_string(),
+            },
+            100,
+        )];
+        let dest = Destination::domain("heals-es-dev");
+        let result = matcher.find_matching_rule(&dest, &rules).await;
+        assert!(result.is_ok());
+        let matching_rule = result.unwrap();
+        assert!(matching_rule.is_some());
+        assert_eq!(matching_rule.unwrap().name, "heals-prefix");
+    }
+
+    #[tokio::test]
+    async fn test_find_matching_rule_with_prefix_domain_pattern_no_match() {
+        let matcher = RuleMatcher::new();
+        let rules = vec![create_test_rule(
+            "heals-prefix",
+            MatchOn::DomainPattern {
+                domain_pattern: "heals-*".to_string(),
+            },
+            100,
+        )];
+        let dest = Destination::domain("api-heals-internal");
+        let result = matcher.find_matching_rule(&dest, &rules).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
     }
 
     // -------------------------------------------------------------------------

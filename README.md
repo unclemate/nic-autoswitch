@@ -103,6 +103,7 @@ priority = 50
 | 单 IP | `{ ip = "x.x.x.x" }` | `{ ip = "192.168.1.1" }` |
 | 域名 | `{ domain = "example.com" }` | `{ domain = "internal.corp.com" }` |
 | 通配符域名 | `{ domain_pattern = "*.example.com" }` | `{ domain_pattern = "*.corp.local" }` |
+| 通配符域名（前缀） | `{ domain_pattern = "heals-*" }` | `{ domain_pattern = "app-*" }` |
 
 ## CLI 工具
 

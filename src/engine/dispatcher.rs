@@ -136,29 +136,94 @@ impl EventDispatcher {
     async fn handle_interface_change(
         &self,
         interface: &str,
-        _change: crate::monitor::InterfaceChange,
+        change: crate::monitor::InterfaceChange,
     ) -> crate::Result<()> {
-        debug!("Interface changed: {}", interface);
+        debug!("Interface changed: {} ({:?})", interface, change);
 
-        // Check if interface is up and has valid configuration
-        let should_apply = {
-            let network_state = self.network_state.read();
-            if let Some(info) = network_state.get_interface(interface) {
-                if !info.is_up {
-                    debug!("Interface {} is down, skipping", interface);
-                    return Ok(());
-                }
-
-                // Apply default rules if no WiFi SSID is active
-                let ssids = self.current_ssids.read();
-                !ssids.contains_key(interface)
-            } else {
-                false
+        match change {
+            crate::monitor::InterfaceChange::Down | crate::monitor::InterfaceChange::Removed => {
+                self.handle_interface_down(interface).await?;
             }
+            crate::monitor::InterfaceChange::Up => {
+                let should_apply = {
+                    let network_state = self.network_state.read();
+                    if let Some(info) = network_state.get_interface(interface) {
+                        if !info.is_up {
+                            debug!("Interface {} is down, skipping", interface);
+                            return Ok(());
+                        }
+                        let ssids = self.current_ssids.read();
+                        !ssids.contains_key(interface)
+                    } else {
+                        false
+                    }
+                };
+
+                if should_apply {
+                    self.apply_default_rules(interface).await?;
+                }
+            }
+            crate::monitor::InterfaceChange::Added => {
+                debug!("Interface {} added, waiting for Up event", interface);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Handle interface going down or being removed
+    ///
+    /// Removes all active routes whose `route_via` references the downed
+    /// interface, along with the corresponding policy rules.
+    async fn handle_interface_down(&self, interface: &str) -> crate::Result<()> {
+        info!(
+            "Interface {} went down, cleaning up dependent routes",
+            interface
+        );
+
+        // Collect active routes that route via the downed interface
+        let to_remove: Vec<(String, u32)> = {
+            let active = self.executor.active_routes();
+            active
+                .iter()
+                .filter(|(_, route)| route.interface == interface)
+                .map(|(name, route)| (name.clone(), route.table_id))
+                .collect()
         };
 
-        if should_apply {
-            self.apply_default_rules(interface).await?;
+        if to_remove.is_empty() {
+            debug!("No active routes depend on interface {}", interface);
+            return Ok(());
+        }
+
+        // Load matching rules from config (both default and wifi profile rules)
+        let rules_map: std::collections::HashMap<String, crate::config::RouteRule> = {
+            let config = self.config.read();
+            let mut map = std::collections::HashMap::new();
+            for r in &config.routing.default_rules {
+                map.insert(r.name.clone(), r.clone());
+            }
+            for profile in config.wifi_profiles.values() {
+                for r in &profile.rules {
+                    map.insert(r.name.clone(), r.clone());
+                }
+            }
+            map
+        };
+
+        for (rule_name, table_id) in &to_remove {
+            if let Some(rule) = rules_map.get(rule_name) {
+                info!(
+                    "Removing route '{}' (via {}) from table {}",
+                    rule_name, interface, table_id
+                );
+                if let Err(e) = self.executor.remove_rule(rule, *table_id).await {
+                    warn!(
+                        "Failed to remove rule '{}' on interface down: {}",
+                        rule_name, e
+                    );
+                }
+            }
         }
 
         Ok(())
@@ -238,6 +303,10 @@ impl EventDispatcher {
     }
 
     /// Apply default routing rules
+    ///
+    /// Default rules are global and should only exist once.  Rules that
+    /// are already tracked as active are skipped to prevent duplicates
+    /// when multiple configured interfaces are up simultaneously.
     async fn apply_default_rules(&self, interface: &str) -> crate::Result<()> {
         // Clone rules to avoid holding lock across await
         let rules = {
@@ -253,15 +322,22 @@ impl EventDispatcher {
         let table_id = self.get_table_id_for_interface(interface);
 
         for rule in &rules {
+            // Skip rules already applied to any table (prevents duplicates)
+            if self.executor.is_route_active(&rule.name) {
+                debug!(
+                    "Default rule '{}' already active, skipping duplicate",
+                    rule.name
+                );
+                continue;
+            }
             if let Err(e) = self.executor.apply_rule(rule, 0, table_id).await {
                 warn!("Failed to apply default rule '{}': {}", rule.name, e);
             }
         }
 
         info!(
-            "Applied {} default rules for interface {}",
-            rules.len(),
-            interface
+            "Applied default rules for interface {} (table {})",
+            interface, table_id
         );
         Ok(())
     }
@@ -317,6 +393,92 @@ impl EventDispatcher {
     /// Get current SSID for interface
     pub fn current_ssid(&self, interface: &str) -> Option<String> {
         self.current_ssids.read().get(interface).cloned()
+    }
+
+    /// Apply initial routing rules based on current interface state.
+    ///
+    /// Called once at daemon startup to populate `NetworkState` with
+    /// currently-active interfaces and apply default routing rules for
+    /// every interface that is both configured and up.
+    pub async fn apply_initial_state(
+        &self,
+        interfaces: &[crate::monitor::InterfaceInfo],
+    ) -> crate::Result<()> {
+        // 1. Populate NetworkState with all known interfaces
+        {
+            let mut state = self.network_state.write();
+            for info in interfaces {
+                state.update_interface(info.clone());
+            }
+        }
+
+        // 2. Clean up stale tables from previous daemon runs
+        self.cleanup_stale_tables().await?;
+
+        // 3. Collect names of configured-and-up interfaces (lock scope is tiny)
+        let names: Vec<String> = {
+            let config = self.config.read();
+            interfaces
+                .iter()
+                .filter(|info| info.is_up && config.interfaces.contains_key(&info.name))
+                .map(|info| info.name.clone())
+                .collect()
+        };
+
+        // 4. Apply default rules for each qualifying interface (no lock held across await)
+        for name in &names {
+            info!("Applying initial rules for configured interface: {}", name);
+            if let Err(e) = self.apply_default_rules(name).await {
+                tracing::warn!("Failed to apply initial rules for {}: {}", name, e);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Clean up stale routing tables and policy rules from previous daemon runs.
+    ///
+    /// Iterates all table IDs that could have been assigned in previous runs
+    /// (base..base+MAX_INTERFACES for IPv4, 200..200+MAX_INTERFACES for IPv6)
+    /// and flushes both routes and policy rules. This ensures a clean slate
+    /// before applying the current configuration.
+    async fn cleanup_stale_tables(&self) -> crate::Result<()> {
+        const MAX_INTERFACES: u32 = 32; // generous upper bound
+
+        // Clone Arc to release parking_lot lock before .await
+        let rm = Arc::clone(&*self.executor.route_manager());
+        let base = rm.table_id_v4(0); // e.g. 100
+
+        let mut total_cleaned = 0usize;
+
+        for idx in 0..MAX_INTERFACES {
+            let table_v4 = base + idx;
+            let table_v6 = 200 + idx;
+
+            for table_id in [table_v4, table_v6] {
+                match rm.flush_table_complete(table_id).await {
+                    Ok(count) if count > 0 => {
+                        total_cleaned += count;
+                        info!("Cleaned up {} stale entries from table {}", count, table_id);
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        debug!("Failed to flush table {} during cleanup: {}", table_id, e);
+                    }
+                }
+            }
+        }
+
+        if total_cleaned > 0 {
+            info!(
+                "Startup cleanup: removed {} total stale entries across custom tables",
+                total_cleaned
+            );
+        } else {
+            debug!("No stale routing entries found during startup cleanup");
+        }
+
+        Ok(())
     }
 
     /// Get network state

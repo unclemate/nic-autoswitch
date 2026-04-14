@@ -210,7 +210,7 @@ pub enum MatchOn {
     Ip { ip: IpAddr },
     /// Match exact domain name
     Domain { domain: String },
-    /// Match domain pattern (supports wildcard like "*.example.com")
+    /// Match domain pattern ("*.example.com" for suffix, "heals-*" for prefix, "*" for all)
     DomainPattern { domain_pattern: String },
 }
 
@@ -246,16 +246,39 @@ impl RouteRule {
             ));
         }
 
-        // Validate domain patterns
-        if let MatchOn::DomainPattern { domain_pattern } = &self.match_on
-            && !domain_pattern.starts_with('*')
-        {
-            return Err(crate::NicAutoSwitchError::Config(format!(
-                "domain_pattern '{}' must start with '*' for wildcard matching",
-                domain_pattern
-            )));
+        // Validate domain patterns: '*' must appear as prefix or suffix
+        if let MatchOn::DomainPattern { domain_pattern } = &self.match_on {
+            validate_domain_pattern(domain_pattern)?;
         }
 
+        Ok(())
+    }
+}
+
+/// Validate that a domain pattern contains '*' only as a single leading or trailing wildcard.
+fn validate_domain_pattern(pattern: &str) -> crate::Result<()> {
+    if pattern == "*" {
+        return Ok(());
+    }
+    if let Some(rest) = pattern.strip_prefix('*') {
+        return ensure_no_inner_star(rest, pattern);
+    }
+    if let Some(rest) = pattern.strip_suffix('*') {
+        return ensure_no_inner_star(rest, pattern);
+    }
+    Err(crate::NicAutoSwitchError::Config(format!(
+        "domain_pattern '{}' must contain '*' as prefix or suffix (e.g. '*.example.com' or 'heals-*')",
+        pattern
+    )))
+}
+
+fn ensure_no_inner_star(rest: &str, original: &str) -> crate::Result<()> {
+    if rest.contains('*') {
+        Err(crate::NicAutoSwitchError::Config(format!(
+            "domain_pattern '{}' contains '*' in an unsupported position; only a single leading or trailing '*' is allowed",
+            original
+        )))
+    } else {
         Ok(())
     }
 }
@@ -503,7 +526,66 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("must start with '*'")
+                .contains("must contain '*' as prefix or suffix")
+        );
+    }
+
+    #[test]
+    fn test_route_rule_with_valid_prefix_domain_pattern_succeeds() {
+        let rule = RouteRule {
+            name: "prefix-wildcard".to_string(),
+            match_on: MatchOn::DomainPattern {
+                domain_pattern: "heals-*".to_string(),
+            },
+            route_via: RouteVia {
+                interface: "eth0".to_string(),
+            },
+            priority: 100,
+        };
+        assert!(rule.validate().is_ok());
+    }
+
+    #[test]
+    fn test_route_rule_with_star_in_middle_returns_error() {
+        let rule = RouteRule {
+            name: "bad-middle".to_string(),
+            match_on: MatchOn::DomainPattern {
+                domain_pattern: "*foo*bar".to_string(),
+            },
+            route_via: RouteVia {
+                interface: "eth0".to_string(),
+            },
+            priority: 100,
+        };
+        let result = rule.validate();
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("unsupported position")
+        );
+    }
+
+    #[test]
+    fn test_route_rule_with_no_wildcard_returns_error() {
+        let rule = RouteRule {
+            name: "no-wildcard".to_string(),
+            match_on: MatchOn::DomainPattern {
+                domain_pattern: "foo*bar".to_string(),
+            },
+            route_via: RouteVia {
+                interface: "eth0".to_string(),
+            },
+            priority: 100,
+        };
+        let result = rule.validate();
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("must contain '*' as prefix or suffix")
         );
     }
 

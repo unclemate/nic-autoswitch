@@ -59,6 +59,41 @@ impl Default for ServiceConfig {
     }
 }
 
+/// RAII guard that ensures a `NetlinkMonitor` is always returned to its slot,
+/// even if the operation panics.
+struct MonitorGuard<'a> {
+    slot: &'a RwLock<Option<NetlinkMonitor>>,
+    monitor: Option<NetlinkMonitor>,
+}
+
+impl<'a> Drop for MonitorGuard<'a> {
+    fn drop(&mut self) {
+        if let Some(m) = self.monitor.take() {
+            *self.slot.write() = Some(m);
+        }
+    }
+}
+
+impl<'a> MonitorGuard<'a> {
+    /// Take the monitor out of the slot and create a guard.
+    /// Returns `None` if no monitor is present.
+    fn take(slot: &'a RwLock<Option<NetlinkMonitor>>) -> Option<Self> {
+        let monitor = slot.write().take()?;
+        Some(Self {
+            slot,
+            monitor: Some(monitor),
+        })
+    }
+
+    /// Get a mutable reference to the monitor.
+    ///
+    /// # Panics
+    /// Panics if the monitor was already taken (should never happen).
+    fn monitor(&mut self) -> &mut NetlinkMonitor {
+        self.monitor.as_mut().expect("monitor already taken")
+    }
+}
+
 /// Main daemon service
 pub struct DaemonService {
     /// Service configuration
@@ -157,6 +192,9 @@ impl DaemonService {
         self.dispatcher.start();
         *self.state.write() = ServiceState::Running;
 
+        // Apply initial routing rules based on current network state
+        self.apply_initial_routes().await?;
+
         // Notify systemd we're ready
         self.systemd.notify_ready();
         info!("Daemon started and ready");
@@ -172,6 +210,30 @@ impl DaemonService {
 
         info!("Daemon stopped");
         result
+    }
+
+    /// Apply routing rules based on the current network state.
+    ///
+    /// Called once after the dispatcher starts, before entering the main loop.
+    /// Populates the dispatcher's NetworkState and applies default rules for
+    /// all configured, active interfaces.
+    async fn apply_initial_routes(&self) -> crate::Result<()> {
+        let mut guard = match MonitorGuard::take(&self.netlink_monitor) {
+            Some(g) => g,
+            None => {
+                warn!("No netlink monitor available for initial state");
+                return Ok(());
+            }
+        };
+        let interfaces = guard.monitor().get_interfaces().await?;
+        // guard's Drop puts monitor back
+
+        info!(
+            "Applying initial routes for {} interfaces",
+            interfaces.len()
+        );
+
+        self.dispatcher.apply_initial_state(&interfaces).await
     }
 
     /// Main event loop
@@ -241,32 +303,12 @@ impl DaemonService {
     /// Uses a guard pattern to ensure the monitor is always put back,
     /// even if polling or event handling panics.
     async fn poll_network_changes(&self) {
-        // Take the monitor out to avoid holding a non-async lock across an await point
-        let monitor = match self.netlink_monitor.write().take() {
-            Some(m) => m,
+        let mut guard = match MonitorGuard::take(&self.netlink_monitor) {
+            Some(g) => g,
             None => return,
         };
 
-        // Guard: ensures monitor is put back when this scope exits
-        struct MonitorGuard<'a> {
-            slot: &'a RwLock<Option<crate::monitor::NetlinkMonitor>>,
-            monitor: Option<crate::monitor::NetlinkMonitor>,
-        }
-
-        impl<'a> Drop for MonitorGuard<'a> {
-            fn drop(&mut self) {
-                if let Some(m) = self.monitor.take() {
-                    *self.slot.write() = Some(m);
-                }
-            }
-        }
-
-        let mut guard = MonitorGuard {
-            slot: &self.netlink_monitor,
-            monitor: Some(monitor),
-        };
-
-        let events = match guard.monitor.as_mut().unwrap().poll_changes().await {
+        let events = match guard.monitor().poll_changes().await {
             Ok(events) => events,
             Err(e) => {
                 warn!("Failed to poll network changes: {}", e);
