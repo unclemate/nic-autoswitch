@@ -1,0 +1,79 @@
+# nic-autoswitch 配置文件
+# 部署路径: /etc/nic-autoswitch/config.toml
+
+# ============================================================================
+# 全局配置
+# ============================================================================
+[global]
+monitor_interval = 5
+log_level = "info"
+dry_run = false
+table_id_start = 100
+
+# ============================================================================
+# 接口配置
+# ============================================================================
+
+# 有线 LAN（内网优先出口）
+[interfaces.enp0s31f6]
+interface_type = "lan"
+match_by = { name = "enp0s31f6" }
+priority = 10
+
+# 无线 WLAN（默认出口）
+[interfaces.wlan0]
+interface_type = "wlan"
+match_by = { name = "wlan0" }
+priority = 20
+
+# USB 网卡（备用 LAN）
+[interfaces.enp58s0u1]
+interface_type = "lan"
+match_by = { name = "enp58s0u1" }
+priority = 15
+
+# ============================================================================
+# 默认路由规则（不依赖 WiFi SSID，始终生效）
+# ============================================================================
+
+# heals-* 系列主机全部走 LAN
+[[routing.default_rules]]
+name = "heals-prefix-via-lan"
+match_on = { domain_pattern = "heals-*" }
+route_via = { interface = "enp0s31f6" }
+priority = 200
+
+# 本地网络走 WLAN
+[[routing.default_rules]]
+name = "lan-subnet-via-wlan"
+match_on = { cidr = "192.168.99.0/24" }
+route_via = { interface = "wlan0" }
+priority = 500
+
+# 跳板机走 LAN
+[[routing.default_rules]]
+name = "jump-via-lan"
+match_on = { domain = "jump" }
+route_via = { interface = "enp0s31f6" }
+priority = 210
+
+# unclemt-dev 走 LAN
+[[routing.default_rules]]
+name = "unclemt-dev-via-lan"
+match_on = { domain = "unclemt-dev" }
+route_via = { interface = "enp0s31f6" }
+priority = 220
+
+# 默认 IPv4 路由（所有流量走 WLAN）
+[[routing.default_rules]]
+name = "default-ipv4"
+match_on = { cidr = "0.0.0.0/0" }
+route_via = { interface = "wlan0" }
+priority = 10000
+
+# 默认 IPv6 路由
+[[routing.default_rules]]
+name = "default-ipv6"
+match_on = { cidr = "::/0" }
+route_via = { interface = "wlan0" }
+priority = 10001
